@@ -10,8 +10,6 @@ from OCC.Core.RWMesh import RWMesh_NameFormat_Product
 from OCC.Core.TColStd import TColStd_IndexedDataMapOfStringString
 from OCC.Core.Message import Message_ProgressRange
 from OCC.Core.IFSelect import IFSelect_RetDone
-from OCC.Core.Bnd import Bnd_Box
-from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.Interface import Interface_Static
 
 # Force OCCT to interpret all STEP geometry in millimeters.
@@ -23,16 +21,13 @@ STEP_DIR = BASE_DIR / "STEP" / "PL" / "Female Wiggins"
 GLB_DIR  = BASE_DIR / "GLB" / "PL" / "Female Wiggins"
 
 # ---- Mesh quality ----
-DEFLECTION_FACTOR  = 0.12
-ANGULAR_DEFLECTION = 0.02   # radians
-
-def get_bbox_diagonal(shape) -> float:
-    """Calculate bounding box diagonal length for adaptive deflection."""
-    box = Bnd_Box()
-    brepbndlib.Add(shape, box)
-    xmin, ymin, zmin, xmax, ymax, zmax = box.Get()
-    dx, dy, dz = xmax - xmin, ymax - ymin, zmax - zmin
-    return (dx**2 + dy**2 + dz**2) ** 0.5
+# Curves are split by angle, so every circle gets about the same number of
+# segments (~51 at 0.25 rad) whatever its radius - small holes stay round.
+ANGULAR_DEFLECTION = 0.25   # radians
+# Max mesh-to-surface distance (mm). Must stay small: OCCT never makes edge
+# segments shorter than 10% of it, which used to turn small holes into
+# squares/triangles when this scaled with part size.
+LINEAR_DEFLECTION_MM = 0.2
 
 
 def step_to_glb(step_path: str, glb_path: str) -> bool:
@@ -65,11 +60,10 @@ def step_to_glb(step_path: str, glb_path: str) -> bool:
     for i in range(labels.Length()):
         shape = shape_tool.GetShape(labels.Value(i + 1))
         if not shape.IsNull():
-            diag = get_bbox_diagonal(shape)
-            lin_defl = max(diag * DEFLECTION_FACTOR, 1e-6)
+            # The constructor runs the meshing itself.
             BRepMesh_IncrementalMesh(
-                shape, lin_defl, False, ANGULAR_DEFLECTION, True
-            ).Perform()
+                shape, LINEAR_DEFLECTION_MM, False, ANGULAR_DEFLECTION, True
+            )
 
     # --- Export GLB with product names ---
     writer = RWGltf_CafWriter(glb_path, True)

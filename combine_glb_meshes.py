@@ -75,6 +75,21 @@ def get_accessor_array(glb: pygltflib.GLTF2, accessor_idx: int) -> np.ndarray:
     return data.copy()
 
 
+def weld_vertices(pos: np.ndarray, norm: np.ndarray, indices: np.ndarray):
+    """Merge vertices whose position and normal are identical; lossless."""
+    key = pos if norm is None else np.hstack([pos, norm])
+    key = np.ascontiguousarray(key, dtype=np.float32)
+    rows = key.view(np.dtype((np.void, key.dtype.itemsize * key.shape[1]))).ravel()
+    _, first, inverse = np.unique(rows, return_index=True, return_inverse=True)
+    # Keep vertices in original order so the buffer stays cache-friendly.
+    order = np.argsort(first)
+    remap = np.empty_like(order)
+    remap[order] = np.arange(len(order))
+    keep = first[order]
+    new_norm = None if norm is None else norm[keep]
+    return pos[keep], new_norm, remap[inverse.ravel()][indices].astype(np.uint32)
+
+
 def combine_glb_file(glb_path: Path, keep_parts: bool = False) -> bool:
     """
     Combines sub-primitives/meshes of each component in a GLB file into single meshes.
@@ -155,7 +170,15 @@ def combine_glb_file(glb_path: Path, keep_parts: bool = False) -> bool:
 
         comp_pos = np.vstack(all_positions).astype(np.float32)
         comp_norm = np.vstack(all_normals).astype(np.float32) if all_normals else None
+        if comp_norm is not None and len(comp_norm) != len(comp_pos):
+            # Some primitives had no normals; a partial NORMAL accessor is invalid glTF.
+            comp_norm = None
         comp_indices = np.concatenate(all_indices).astype(np.uint32)
+        comp_pos, comp_norm, comp_indices = weld_vertices(comp_pos, comp_norm, comp_indices)
+        # 16-bit indices halve the index data whenever the mesh is small enough.
+        use_short = len(comp_pos) < 65535
+        if use_short:
+            comp_indices = comp_indices.astype(np.uint16)
 
         # --- Create binary buffers & accessors for combined mesh ---
         # 1. POSITION
@@ -212,12 +235,14 @@ def combine_glb_file(glb_path: Path, keep_parts: bool = False) -> bool:
             target=pygltflib.ELEMENT_ARRAY_BUFFER
         ))
         new_buffer_bytes.extend(idx_bytes)
-        
+        # Keep the next mesh's float data 4-byte aligned after uint16 indices.
+        new_buffer_bytes.extend(b"\0" * (-len(new_buffer_bytes) % 4))
+
         idx_acc_idx = len(new_glb.accessors)
         new_glb.accessors.append(pygltflib.Accessor(
             bufferView=idx_bv_idx,
             byteOffset=0,
-            componentType=pygltflib.UNSIGNED_INT,
+            componentType=pygltflib.UNSIGNED_SHORT if use_short else pygltflib.UNSIGNED_INT,
             count=len(comp_indices),
             type=pygltflib.SCALAR,
             min=[int(comp_indices.min())],
