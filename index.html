@@ -133,7 +133,9 @@
 
             try {
 
-                const BACKEND_BASE_URL = "https://steptoglbconverter.onrender.com";
+                // Served by a local app.py: use that server; otherwise use the deployed backend.
+                const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+                const BACKEND_BASE_URL = isLocal ? window.location.origin : "https://steptoglbconverter.onrender.com";
 
                 const API_URL = `${BACKEND_BASE_URL}/convert`;
 
