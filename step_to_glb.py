@@ -30,53 +30,63 @@ ANGULAR_DEFLECTION = 0.25   # radians
 LINEAR_DEFLECTION_MM = 0.2
 
 
-def step_to_glb(step_path: str, glb_path: str) -> bool:
+def step_to_glb(step_path: str | Path, glb_path: str | Path) -> bool:
     """
     Convert a STEP file to GLB preserving assembly structure, product names,
     and individual meshes. No mesh merging or compound flattening performed.
     """
-    app = XCAFApp_Application.GetApplication()
-    doc = TDocStd_Document("MDTV-XCAF")
-    app.NewDocument("MDTV-XCAF", doc)
+    try:
+        step_path_str = str(step_path)
+        glb_path_obj = Path(glb_path)
+        glb_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        glb_path_str = str(glb_path_obj)
 
-    reader = STEPCAFControl_Reader()
-    reader.SetColorMode(True)
-    reader.SetNameMode(True)
-    reader.SetLayerMode(True)
-    reader.SetPropsMode(True)
+        app = XCAFApp_Application.GetApplication()
+        doc = TDocStd_Document("MDTV-XCAF")
+        app.NewDocument("MDTV-XCAF", doc)
 
-    if reader.ReadFile(step_path) != IFSelect_RetDone:
-        print(f"  ERROR: Could not read STEP file '{step_path}'.")
+        reader = STEPCAFControl_Reader()
+        reader.SetColorMode(True)
+        reader.SetNameMode(True)
+        reader.SetLayerMode(True)
+        reader.SetPropsMode(True)
+
+        if reader.ReadFile(step_path_str) != IFSelect_RetDone:
+            print(f"  ERROR: Could not read STEP file '{step_path_str}'.")
+            return False
+        if not reader.Transfer(doc):
+            print(f"  ERROR: Transfer failed for '{step_path_str}'.")
+            return False
+
+        shape_tool = XCAFDoc_DocumentTool.ShapeTool(doc.Main())
+        labels = TDF_LabelSequence()
+        shape_tool.GetFreeShapes(labels)
+
+        # --- Tessellate each shape ---
+        for i in range(labels.Length()):
+            shape = shape_tool.GetShape(labels.Value(i + 1))
+            if not shape.IsNull():
+                # The constructor runs the meshing itself.
+                BRepMesh_IncrementalMesh(
+                    shape, LINEAR_DEFLECTION_MM, False, ANGULAR_DEFLECTION, True
+                )
+
+        # --- Export GLB with product names ---
+        writer = RWGltf_CafWriter(glb_path_str, True)
+        writer.SetTransformationFormat(0)  # Compact
+        writer.ChangeCoordinateSystemConverter().SetInputLengthUnit(0.001)  # MM to Meters
+        writer.SetNodeNameFormat(RWMesh_NameFormat_Product)
+
+        ok = writer.Perform(
+            doc, labels, None,
+            TColStd_IndexedDataMapOfStringString(), Message_ProgressRange()
+        )
+
+        return bool(ok)
+    except Exception as e:
+        print(f"  ERROR converting '{step_path}' to '{glb_path}': {e}")
         return False
-    if not reader.Transfer(doc):
-        print(f"  ERROR: Transfer failed for '{step_path}'.")
-        return False
 
-    shape_tool = XCAFDoc_DocumentTool.ShapeTool(doc.Main())
-    labels = TDF_LabelSequence()
-    shape_tool.GetFreeShapes(labels)
-
-    # --- Tessellate each shape ---
-    for i in range(labels.Length()):
-        shape = shape_tool.GetShape(labels.Value(i + 1))
-        if not shape.IsNull():
-            # The constructor runs the meshing itself.
-            BRepMesh_IncrementalMesh(
-                shape, LINEAR_DEFLECTION_MM, False, ANGULAR_DEFLECTION, True
-            )
-
-    # --- Export GLB with product names ---
-    writer = RWGltf_CafWriter(glb_path, True)
-    writer.SetTransformationFormat(0)  # Compact
-    writer.ChangeCoordinateSystemConverter().SetInputLengthUnit(0.001)  # MM to Meters
-    writer.SetNodeNameFormat(RWMesh_NameFormat_Product)
-
-    ok = writer.Perform(
-        doc, labels, None,
-        TColStd_IndexedDataMapOfStringString(), Message_ProgressRange()
-    )
-
-    return ok
 
 
 def batch_convert():

@@ -90,10 +90,11 @@ def weld_vertices(pos: np.ndarray, norm: np.ndarray, indices: np.ndarray):
     return pos[keep], new_norm, remap[inverse.ravel()][indices].astype(np.uint32)
 
 
-def combine_glb_file(glb_path: Path, keep_parts: bool = False) -> bool:
+def combine_glb_file(glb_path: Path | str, keep_parts: bool = False) -> bool:
     """
     Combines sub-primitives/meshes of each component in a GLB file into single meshes.
     """
+    glb_path = Path(glb_path)
     try:
         glb = pygltflib.GLTF2().load(str(glb_path))
     except Exception as e:
