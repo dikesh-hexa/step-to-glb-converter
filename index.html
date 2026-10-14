@@ -643,7 +643,11 @@
 
 <script>
     // --- Backend URL Resolution ---
-    const DEFAULT_BACKEND = (window.location.origin && !window.location.origin.startsWith('file:') && !window.location.origin.includes('5173'))
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const isRenderBackend = window.location.hostname.includes('onrender.com');
+
+    // When served by FastAPI directly (Render or Localhost), use origin; when on Vercel, route to Render
+    const DEFAULT_BACKEND = (isLocalhost || isRenderBackend)
         ? window.location.origin
         : "https://steptoglbconverter.onrender.com";
 
